@@ -1,7 +1,7 @@
 package com.dopkit.example;
 
-import com.dopkit.router.GenericRouter;
-import com.dopkit.router.RouteRegistration;
+import com.dopkit.dispatch.PathMatchResult;
+import com.dopkit.router.GenericPathRouter;
 import com.dopkit.component.StdRunComponentLogic;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,12 +17,12 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 public class UserApiRouterTest {
 
-    private GenericRouter<ApiRuntime, ApiRequest, Map<String, String>, ApiResponse> router;
+    private GenericPathRouter<ApiRuntime, ApiRequest, ApiResponse> router;
     private ApiRuntime runtime;
 
     @BeforeEach
     public void setUp() {
-        router = new GenericRouter<>();
+        router = new GenericPathRouter<>(ApiRequest::getPath);
         runtime = ApiRuntime.builder()
                 .appId("test-app")
                 .userId("admin")
@@ -38,12 +38,7 @@ public class UserApiRouterTest {
     public void testFunctionalStyleRegistration() {
         // 注册: GET /user/search?keyword=xxx
         router.register(
-                // 路由匹配器
-                request -> {
-                    PathMatcher matcher = new PathMatcher("/user/search");
-                    return matcher.match(request.getPath());
-                },
-                // 处理器 - 使用标准组件封装逻辑
+                "/user/search",
                 (rt, req, matchResult) -> {
                     return StdRunComponentLogic.runByFuncStyleAdapter(
                             rt, req, null,
@@ -96,7 +91,7 @@ public class UserApiRouterTest {
     @Test
     public void testOOPStyleRegistration() {
         // 使用OOP风格的路由注册
-        router.register(new GetUserByUsernameRoute());
+        new GetUserByUsernameRoute().register(router);
 
         // 测试获取用户
         ApiRequest request = ApiRequest.builder()
@@ -118,7 +113,7 @@ public class UserApiRouterTest {
     public void testMixedRegistration() {
         // 1. 函数式注册: 搜索用户
         router.register(
-                request -> new PathMatcher("/user/search").match(request.getPath()),
+                "/user/search",
                 (rt, req, matchResult) -> {
                     String keyword = req.getQueryParams() != null
                             ? req.getQueryParams().get("keyword")
@@ -130,7 +125,7 @@ public class UserApiRouterTest {
 
         // 2. 函数式注册: 创建用户（需要在通配路由之前）
         router.register(
-                request -> new PathMatcher("/user/create").match(request.getPath()),
+                "/user/create",
                 (rt, req, matchResult) -> {
                     Map<String, String> params = req.getQueryParams();
                     if (params == null) {
@@ -145,7 +140,7 @@ public class UserApiRouterTest {
         );
 
         // 3. OOP注册: 获取用户（通配路由，放在最后避免误匹配）
-        router.register(new GetUserByUsernameRoute());
+        new GetUserByUsernameRoute().register(router);
 
         // 测试搜索
         ApiRequest searchRequest = ApiRequest.builder()
@@ -182,37 +177,24 @@ public class UserApiRouterTest {
         assertEquals("david", createdUser.getUsername());
     }
 
-    /**
-     * OOP风格的路由注册示例
-     * 继承自RouteRegistration，实现完整的路由逻辑
-     */
-    static class GetUserByUsernameRoute extends RouteRegistration<ApiRuntime, ApiRequest, Map<String, String>, ApiResponse> {
-        private static final PathMatcher PATH_MATCHER = new PathMatcher("/user/{username}");
-
-        public GetUserByUsernameRoute() {
-            super(
-                    // 匹配器
-                    request -> PATH_MATCHER.match(request.getPath()),
-                    // 处理器 - 使用标准组件封装逻辑
-                    (runtime, request, matchResult) -> {
-                        return StdRunComponentLogic.runByFuncStyleAdapter(
-                                runtime, request, null,
-                                StdRunComponentLogic::stdMakeNullOuterComputed,
-                                StdRunComponentLogic::stdMakeIdentityInnerRuntime,
-                                // 输入转换: 提取路径变量
-                                (rt, req, config, computed) -> matchResult.get("username"),
-                                StdRunComponentLogic::stdMakeIdentityInnerConfig,
-                                // 核心逻辑
-                                (ApiRuntime rt, String username, Object config) -> rt.getUserService().getUserByUsername(username),
-                                // 输出转换
-                                (ApiRuntime rt, ApiRequest req, Object config, Object computed, User user) -> {
-                                    if (user == null) {
-                                        return ApiResponse.error(404, "User not found");
-                                    }
-                                    return ApiResponse.success(user);
+    static class GetUserByUsernameRoute {
+        void register(GenericPathRouter<ApiRuntime, ApiRequest, ApiResponse> router) {
+            router.register(
+                    "/user/{username}",
+                    (runtime, request, matchResult) -> StdRunComponentLogic.runByFuncStyleAdapter(
+                            runtime, request, null,
+                            StdRunComponentLogic::stdMakeNullOuterComputed,
+                            StdRunComponentLogic::stdMakeIdentityInnerRuntime,
+                            (rt, req, config, computed) -> matchResult.getVariables().get("username"),
+                            StdRunComponentLogic::stdMakeIdentityInnerConfig,
+                            (ApiRuntime rt, String username, Object config) -> rt.getUserService().getUserByUsername(username),
+                            (ApiRuntime rt, ApiRequest req, Object config, Object computed, User user) -> {
+                                if (user == null) {
+                                    return ApiResponse.error(404, "User not found");
                                 }
-                        );
-                    }
+                                return ApiResponse.success(user);
+                            }
+                    )
             );
         }
     }

@@ -1,7 +1,13 @@
 package com.dopkit.actor;
 
-import java.util.Map;
-import java.util.function.Function;
+import com.dopkit.dispatch.ClassDispatchRequest;
+import com.dopkit.dispatch.CommandDispatchRequest;
+import com.dopkit.dispatch.DispatchEngine;
+import com.dopkit.dispatch.DispatchRequest;
+import com.dopkit.dispatch.DispatchResult;
+import com.dopkit.dispatch.EnumDispatchRequest;
+import com.dopkit.dispatch.RouteKeyDispatchRequest;
+import com.dopkit.dispatch.RouteKeyToEnumDispatchRequest;
 
 /**
  * Dop Actor 抽象基类
@@ -41,19 +47,12 @@ public abstract class AbstractActor<TResult> implements IActor<TResult> {
         if (route == null) {
             initRoute();
         }
-
-        Class<?> inputClass = input == null ? Void.class : input.getClass();
-        Function<Object, TResult> handler = route.getClassToHandlerMap().get(inputClass);
-
-        if (handler == null) {
-            // 尝试默认处理器
-            if (route.getDefaultInputHandler() != null) {
-                return route.getDefaultInputHandler().apply(input);
-            }
-            return createErrorResult("No handler registered for input type: " + inputClass.getName());
+        DispatchResult<TResult> result = dispatch(new ClassDispatchRequest<>(input));
+        if (result.isHandled()) {
+            return result.getResult();
         }
-
-        return handler.apply(input);
+        Class<?> inputClass = input == null ? Void.class : input.getClass();
+        return createErrorResult("No handler registered for input type: " + inputClass.getName());
     }
 
     /**
@@ -66,24 +65,20 @@ public abstract class AbstractActor<TResult> implements IActor<TResult> {
             initRoute();
         }
 
-        // 1. 先尝试直接匹配字符串key
-        Function<Object, TResult> handler = route.getKeyToHandlerMap().get(routeKey);
-        if (handler != null) {
-            return handler.apply(input);
+        DispatchResult<TResult> result =
+                dispatch(RouteKeyDispatchRequest.direct(routeKey, input));
+        if (result.isHandled()) {
+            return result.getResult();
         }
 
-        // 2. 尝试转换为枚举（机制4）
-        TResult enumResult = tryConvertAndCallByEnum(routeKey, input);
-        if (enumResult != null) {
-            return enumResult;
+        result = dispatch(new RouteKeyToEnumDispatchRequest<>(routeKey, input));
+        if (result.isHandled()) {
+            return result.getResult();
         }
 
-        // 3. 尝试默认处理器
-        if (route.getDefaultKeyHandler() != null) {
-            return route.getDefaultKeyHandler().apply(routeKey, input);
-        }
-        if (route.getDefaultInputHandler() != null) {
-            return route.getDefaultInputHandler().apply(input);
+        result = dispatch(RouteKeyDispatchRequest.withDefaults(routeKey, input));
+        if (result.isHandled()) {
+            return result.getResult();
         }
 
         return createErrorResult("No handler registered for routeKey: " + routeKey);
@@ -97,47 +92,11 @@ public abstract class AbstractActor<TResult> implements IActor<TResult> {
         if (route == null) {
             initRoute();
         }
-
-        Function<Object, TResult> handler = route.getEnumToHandlerMap().get(routeEnum);
-
-        if (handler == null) {
-            // 尝试默认处理器
-            if (route.getDefaultEnumHandler() != null) {
-                return route.getDefaultEnumHandler().apply(routeEnum, input);
-            }
-            if (route.getDefaultInputHandler() != null) {
-                return route.getDefaultInputHandler().apply(input);
-            }
-            return createErrorResult("No handler registered for enum: " + routeEnum);
+        DispatchResult<TResult> result = dispatch(new EnumDispatchRequest<>(routeEnum, input));
+        if (result.isHandled()) {
+            return result.getResult();
         }
-
-        return handler.apply(input);
-    }
-
-    /**
-     * 尝试将字符串转换为枚举并分发（机制4的实现）
-     */
-    private TResult tryConvertAndCallByEnum(String routeKey, Object input) {
-        Map<Class<? extends Enum<?>>, Function<String, ? extends Enum<?>>> converters =
-                route.getEnumConverters();
-
-        // 遍历所有注册的枚举转换器
-        for (Map.Entry<Class<? extends Enum<?>>, Function<String, ? extends Enum<?>>> entry
-                : converters.entrySet()) {
-
-            Function<String, ? extends Enum<?>> converter = entry.getValue();
-            Enum<?> enumValue = converter.apply(routeKey);
-
-            if (enumValue != null) {
-                // 转换成功，使用枚举分发
-                Function<Object, TResult> handler = route.getEnumToHandlerMap().get(enumValue);
-                if (handler != null) {
-                    return handler.apply(input);
-                }
-            }
-        }
-
-        return null; // 无法转换为任何枚举
+        return createErrorResult("No handler registered for enum: " + routeEnum);
     }
 
     /**
@@ -161,29 +120,18 @@ public abstract class AbstractActor<TResult> implements IActor<TResult> {
             return createErrorResult("CommandTable not configured. " +
                     "Please call registerCommandTable() in createActorRoute()");
         }
-
-        // 1. 尝试将字符串转换为枚举
-        Function<String, ? extends Enum<?>> converter = route.getCommandConverter();
-        Enum<?> commandEnum = converter.apply(command);
-
-        // 2. 如果转换成功，尝试从枚举中提取handler
-        if (commandEnum != null) {
-            Function<Enum<?>, Function<Object, TResult>> extractor = route.getCommandHandlerExtractor();
-            if (extractor != null) {
-                Function<Object, TResult> handler = extractor.apply(commandEnum);
-                if (handler != null) {
-                    // 找到handler，执行
-                    return handler.apply(input);
-                }
-            }
+        DispatchResult<TResult> result = dispatch(new CommandDispatchRequest<>(command, input));
+        if (result.isHandled()) {
+            return result.getResult();
         }
-
-        // 3. 转换失败或未找到handler，使用兜底处理器
-        if (route.getCommandDefaultHandler() != null) {
-            return route.getCommandDefaultHandler().apply(command, input);
-        }
-
-        // 4. 如果连兜底处理器都没有，返回错误
         return createErrorResult("No handler found for command: " + command);
+    }
+
+    private DispatchResult<TResult> dispatch(DispatchRequest<TResult> request) {
+        DispatchEngine<TResult> engine = route.getDispatchEngine();
+        if (engine == null) {
+            return DispatchResult.notHandled();
+        }
+        return engine.dispatch(request);
     }
 }

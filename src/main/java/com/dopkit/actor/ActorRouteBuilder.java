@@ -1,5 +1,8 @@
 package com.dopkit.actor;
 
+import com.dopkit.dispatch.DispatchEngine;
+import com.dopkit.dispatch.DispatchStrategyConfig;
+
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.BiFunction;
@@ -206,6 +209,58 @@ public class ActorRouteBuilder<TResult> {
      * 构建并返回ActorRoute实例
      */
     public ActorRoute<TResult> build() {
+        DispatchEngine<TResult> engine = new DispatchEngine<>();
+
+        if (!route.getClassToHandlerMap().isEmpty() || route.getDefaultInputHandler() != null) {
+            engine.registerStrategy(DispatchStrategyConfig.forClassStrategy(
+                    new DispatchStrategyConfig.ClassDispatchConfig<>(
+                            route.getClassToHandlerMap(),
+                            route.getDefaultInputHandler()
+                    )));
+        }
+
+        if (!route.getKeyToHandlerMap().isEmpty()
+                || route.getDefaultKeyHandler() != null
+                || route.getDefaultInputHandler() != null) {
+            engine.registerStrategy(DispatchStrategyConfig.forRouteKeyStrategy(
+                    new DispatchStrategyConfig.RouteKeyDispatchConfig<>(
+                            route.getKeyToHandlerMap(),
+                            route.getDefaultKeyHandler(),
+                            route.getDefaultInputHandler()
+                    )));
+        }
+
+        if (!route.getEnumToHandlerMap().isEmpty()
+                || route.getDefaultEnumHandler() != null
+                || route.getDefaultInputHandler() != null) {
+            engine.registerStrategy(DispatchStrategyConfig.forEnumStrategy(
+                    new DispatchStrategyConfig.EnumDispatchConfig<>(
+                            route.getEnumToHandlerMap(),
+                            route.getDefaultEnumHandler(),
+                            route.getDefaultInputHandler()
+                    )));
+        }
+
+        if (!route.getEnumConverters().isEmpty()) {
+            engine.registerStrategy(DispatchStrategyConfig.forRouteKeyToEnumStrategy(
+                    new DispatchStrategyConfig.RouteKeyToEnumDispatchConfig<>(
+                            route.getEnumConverters(),
+                            route.getEnumToHandlerMap()
+                    )));
+        }
+
+        if (route.getCommandConverter() != null
+                && route.getCommandHandlerExtractor() != null
+                && route.getCommandDefaultHandler() != null) {
+            engine.registerStrategy(DispatchStrategyConfig.forCommandStrategy(
+                    new DispatchStrategyConfig.CommandDispatchConfig<>(
+                            route.getCommandConverter(),
+                            route.getCommandHandlerExtractor(),
+                            route.getCommandDefaultHandler()
+                    )));
+        }
+
+        route.setDispatchEngine(engine);
         return route;
     }
 }
