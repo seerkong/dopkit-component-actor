@@ -1,5 +1,7 @@
 package com.dopkit.actor;
 
+import com.dopkit.dispatch.DispatchEngine;
+
 import java.util.HashMap;
 import java.util.Map;
 import java.util.function.BiFunction;
@@ -68,6 +70,11 @@ public class ActorRoute<TResult> {
      */
     private BiFunction<String, Object, TResult> commandDefaultHandler;
 
+    /**
+     * Dispatch engine shared by actors.
+     */
+    private DispatchEngine<TResult> dispatchEngine;
+
     // Getters
     public Map<Class<?>, Function<Object, TResult>> getClassToHandlerMap() {
         return classToHandlerMap;
@@ -131,5 +138,13 @@ public class ActorRoute<TResult> {
 
     public void setCommandDefaultHandler(BiFunction<String, Object, TResult> commandDefaultHandler) {
         this.commandDefaultHandler = commandDefaultHandler;
+    }
+
+    public DispatchEngine<TResult> getDispatchEngine() {
+        return dispatchEngine;
+    }
+
+    public void setDispatchEngine(DispatchEngine<TResult> dispatchEngine) {
+        this.dispatchEngine = dispatchEngine;
     }
 }
